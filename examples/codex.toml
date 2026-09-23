@@ -1,0 +1,7 @@
+[mcp_servers.openmausbot_cua]
+command = "uvx"
+args = [
+  "--from",
+  "git+https://github.com/thestandard-production/openmausbot-cua-mcp.git",
+  "openmausbot-cua-mcp",
+]
