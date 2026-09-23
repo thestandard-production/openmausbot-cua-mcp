@@ -6,8 +6,10 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 from typing import Any, TextIO
 
+from . import admin, desired
 from .api import ApiClient, OpenMausBotApiError
 
 
@@ -21,7 +23,7 @@ class _ArgumentParser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = _ArgumentParser(prog="omb-ctl", description="Read OpenMausBot administration data.")
+    parser = _ArgumentParser(prog="omb-ctl", description="Manage OpenMausBot administration data.")
     commands = parser.add_subparsers(dest="command", required=True)
 
     commands.add_parser("status", help="Check API health and compatibility.")
@@ -53,6 +55,51 @@ def _parser() -> argparse.ArgumentParser:
         default="manifest",
         help="Export format.",
     )
+
+    plan = commands.add_parser("plan", help="Plan a desired-state file without writing.")
+    plan.add_argument("file", help="JSON or YAML desired-state file.")
+
+    apply = commands.add_parser("apply", help="Apply one desired-state item.")
+    apply.add_argument("file", help="JSON or YAML desired-state file.")
+    apply.add_argument(
+        "--only", required=True, help="bot:<name>, routine:<name>, or a unique name."
+    )
+    apply.add_argument("--apply", dest="apply_changes", action="store_true")
+
+    bot_update = commands.add_parser("bot-update", help="Update selected bot fields.")
+    bot_update.add_argument("bot", help="Exact bot id, or a unique exact name.")
+    bot_update.add_argument("--json", required=True, dest="patch_json", help="JSON patch object.")
+    bot_update.add_argument("--allow-loosen", action="store_true")
+    bot_update.add_argument("--apply", dest="apply_changes", action="store_true")
+
+    bot_model = commands.add_parser("bot-model", help="Set a validated bot model.")
+    bot_model.add_argument("bot", help="Exact bot id, or a unique exact name.")
+    bot_model.add_argument("--instance", required=True)
+    bot_model.add_argument("--model", required=True)
+    bot_model.add_argument("--effort")
+    bot_model.add_argument("--apply", dest="apply_changes", action="store_true")
+
+    routine_upsert = commands.add_parser("routine-upsert", help="Create or update a routine.")
+    routine_upsert.add_argument("--json", required=True, dest="spec_file", help="JSON spec file.")
+    routine_upsert.add_argument("--apply", dest="apply_changes", action="store_true")
+
+    for command, help_text in (
+        ("routine-enable", "Enable a routine."),
+        ("routine-disable", "Disable a routine."),
+        ("routine-run", "Run a routine immediately."),
+    ):
+        routine_command = commands.add_parser(command, help=help_text)
+        routine_command.add_argument("name", help="Exact routine id, or a unique exact name.")
+        routine_command.add_argument("--apply", dest="apply_changes", action="store_true")
+
+    routine_delete = commands.add_parser("routine-delete", help="Delete a confirmed routine.")
+    routine_delete.add_argument("name", help="Exact routine id, or a unique exact name.")
+    routine_delete.add_argument("--confirm-name", required=True)
+    routine_delete.add_argument("--apply", dest="apply_changes", action="store_true")
+
+    run_cancel = commands.add_parser("run-cancel", help="Cancel a routine run.")
+    run_cancel.add_argument("run_id")
+    run_cancel.add_argument("--apply", dest="apply_changes", action="store_true")
     return parser
 
 
@@ -112,6 +159,32 @@ def _print_routines(payload: dict[str, Any]) -> None:
         )
 
 
+def _json_object(text: str, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise OpenMausBotApiError(f"Invalid {label} JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise OpenMausBotApiError(f"{label} must be a JSON object.")
+    return payload
+
+
+def _json_file(path: str, label: str) -> dict[str, Any]:
+    try:
+        text = Path(path).expanduser().read_text(encoding="utf-8")
+    except OSError as exc:
+        raise OpenMausBotApiError(f"Unable to read {label}: {exc}") from exc
+    return _json_object(text, label)
+
+
+def _write_exit_code(payload: dict[str, Any]) -> int:
+    if not payload.get("ok", False):
+        return 2
+    if payload.get("dry_run") and payload.get("action") != "noop":
+        return 10
+    return 0
+
+
 def _run(client: ApiClient, args: argparse.Namespace) -> tuple[Any, int]:
     if args.command == "status":
         health = client.health()
@@ -144,6 +217,66 @@ def _run(client: ApiClient, args: argparse.Namespace) -> tuple[Any, int]:
         return client.decisions(args.limit), 0
     if args.command == "export":
         return client.export_team(args.format), 0
+    if args.command == "plan":
+        payload = desired.plan(client, args.file)
+        if not payload["ok"]:
+            return payload, 2
+        return payload, 10 if payload["has_changes"] else 0
+    if args.command == "apply":
+        payload = desired.apply(
+            client, args.file, only=args.only, dry_run=not args.apply_changes
+        )
+        return payload, _write_exit_code(payload)
+    if args.command == "bot-update":
+        payload = admin.update_bot(
+            client,
+            args.bot,
+            _json_object(args.patch_json, "bot patch"),
+            allow_loosen=args.allow_loosen,
+            dry_run=not args.apply_changes,
+        )
+        return payload, _write_exit_code(payload)
+    if args.command == "bot-model":
+        payload = admin.set_bot_model(
+            client,
+            args.bot,
+            args.instance,
+            args.model,
+            effort=args.effort,
+            dry_run=not args.apply_changes,
+        )
+        return payload, _write_exit_code(payload)
+    if args.command == "routine-upsert":
+        payload = admin.upsert_routine(
+            client,
+            _json_file(args.spec_file, "routine spec file"),
+            dry_run=not args.apply_changes,
+        )
+        return payload, _write_exit_code(payload)
+    if args.command in {"routine-enable", "routine-disable"}:
+        payload = admin.set_routine_enabled(
+            client,
+            args.name,
+            enabled=args.command == "routine-enable",
+            dry_run=not args.apply_changes,
+        )
+        return payload, _write_exit_code(payload)
+    if args.command == "routine-run":
+        payload = admin.run_routine_now(
+            client, args.name, dry_run=not args.apply_changes
+        )
+        return payload, _write_exit_code(payload)
+    if args.command == "routine-delete":
+        payload = admin.delete_routine(
+            client,
+            args.name,
+            args.confirm_name,
+            dry_run=not args.apply_changes,
+        )
+        return payload, _write_exit_code(payload)
+    if args.command == "run-cancel":
+        payload = admin.cancel_run(client, args.run_id, dry_run=not args.apply_changes)
+        return payload, _write_exit_code(payload)
     raise OpenMausBotApiError(f"Unknown command: {args.command}")
 
 

@@ -4,10 +4,7 @@ import json
 import plistlib
 import socket
 import subprocess
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
@@ -20,59 +17,6 @@ from openmausbot_cua_mcp.api import (
     validate_base_url,
 )
 from openmausbot_cua_mcp.cli import main
-
-
-@pytest.fixture
-def fake_api(monkeypatch):
-    state: dict[str, Any] = {
-        "responses": {
-            ("GET", "/api/health"): (200, {"app": "openmausbot", "pid": 1}),
-        },
-        "requests": [],
-    }
-
-    class Handler(BaseHTTPRequestHandler):
-        def _serve(self) -> None:
-            parsed = urlsplit(self.path)
-            state["requests"].append(
-                {
-                    "method": self.command,
-                    "path": parsed.path,
-                    "query": parsed.query,
-                    "headers": dict(self.headers),
-                }
-            )
-            status, payload = state["responses"].get(
-                (self.command, parsed.path), (404, {"error": "not found"})
-            )
-            body = json.dumps(payload).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        do_GET = _serve
-        do_POST = _serve
-
-        def log_message(self, format: str, *args: Any) -> None:
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    origin = f"http://127.0.0.1:{server.server_port}"
-    monkeypatch.setenv("OPENMAUSBOT_URL", origin)
-    monkeypatch.delenv("OMB_PORT", raising=False)
-    monkeypatch.delenv("OPENMAUSBOT_TOKEN", raising=False)
-    monkeypatch.delenv("OPENMAUSBOT_TOKEN_KEYCHAIN_SERVICE", raising=False)
-    monkeypatch.delenv("OPENMAUSBOT_TOKEN_KEYCHAIN_ACCOUNT", raising=False)
-    try:
-        yield state, origin
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
 
 
 def test_discovery_does_not_send_token(fake_api, monkeypatch) -> None:

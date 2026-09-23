@@ -10,7 +10,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 DEFAULT_API_TIMEOUT_SECONDS = 10.0
@@ -327,6 +327,100 @@ class ApiClient:
 
     def list_routines(self, from_ms: int | None = None, to_ms: int | None = None) -> dict[str, Any]:
         return self.request("GET", "/api/routines", query={"from": from_ms, "to": to_ms})
+
+    def patch_bot(self, bot_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        return self.request(
+            "PATCH",
+            f"/api/bots/{quote(bot_id, safe='')}",
+            body=patch,
+            require_token=True,
+        )
+
+    def create_routine(self, spec: dict[str, Any]) -> dict[str, Any]:
+        return self.request("POST", "/api/routines", body=spec, require_token=True)
+
+    def update_routine(self, routine_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        return self.request(
+            "PATCH",
+            f"/api/routines/{quote(routine_id, safe='')}",
+            body=patch,
+            require_token=True,
+        )
+
+    def delete_routine(self, routine_id: str) -> dict[str, Any]:
+        return self.request(
+            "DELETE",
+            f"/api/routines/{quote(routine_id, safe='')}",
+            require_token=True,
+        )
+
+    def run_routine(self, routine_id: str) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            f"/api/routines/{quote(routine_id, safe='')}/run",
+            body={},
+            require_token=True,
+        )
+
+    def cancel_run(self, run_id: str) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            f"/api/routine-runs/{quote(run_id, safe='')}/cancel",
+            body={},
+            require_token=True,
+        )
+
+    def validate_model_selection(
+        self,
+        instance_id: str,
+        model: str,
+        effort: str | None = None,
+    ) -> dict[str, str]:
+        """Validate a selection against the server's current provider catalog."""
+        payload = self.request("GET", "/api/instances")
+        instances = payload.get("instances") if isinstance(payload, dict) else None
+        if not isinstance(instances, list):
+            raise OpenMausBotApiError("OpenMausBot returned an invalid provider instance list.")
+        instance = next(
+            (
+                item
+                for item in instances
+                if isinstance(item, dict) and item.get("instanceId") == instance_id
+            ),
+            None,
+        )
+        if instance is None:
+            raise OpenMausBotApiError(f"Unknown model instance: {instance_id}.")
+        snapshot = instance.get("snapshot")
+        state = snapshot.get("state") if isinstance(snapshot, dict) else None
+        if state != "available":
+            raise OpenMausBotApiError(
+                f"Model instance {instance_id} is not available (state: {state or 'unknown'})."
+            )
+        models = instance.get("models")
+        default = models.get("default") if isinstance(models, dict) else None
+        options = models.get("options") if isinstance(models, dict) else None
+        offered = {default} if isinstance(default, str) else set()
+        if isinstance(options, list):
+            offered.update(
+                option.get("id")
+                for option in options
+                if isinstance(option, dict) and isinstance(option.get("id"), str)
+            )
+        if model not in offered:
+            raise OpenMausBotApiError(
+                f"Model {model} is not offered by instance {instance_id}."
+            )
+        capabilities = instance.get("capabilities")
+        levels = capabilities.get("effortLevels") if isinstance(capabilities, dict) else None
+        if effort is not None and (not isinstance(levels, list) or effort not in levels):
+            raise OpenMausBotApiError(
+                f"Effort {effort} is not supported by instance {instance_id}."
+            )
+        selection = {"instanceId": instance_id, "model": model}
+        if effort is not None:
+            selection["effort"] = effort
+        return selection
 
     def list_webhooks(self) -> dict[str, Any]:
         return redact(self.request("GET", "/api/webhooks"))
