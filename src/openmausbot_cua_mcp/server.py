@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from .api import ApiClient, OpenMausBotApiError
 from .bridge import (
     OpenMausBotConnectionError,
     read_companion_settings,
@@ -218,6 +219,180 @@ def openmausbot_cua_permissions_status() -> dict[str, Any]:
 def openmausbot_cua_check_update() -> dict[str, Any]:
     """Check the configured cua-driver release channel without installing anything."""
     return _read_only_command(["check-update"])
+
+
+@mcp.tool(
+    name="openmausbot_api_health",
+    annotations={
+        "title": "Check OpenMausBot Admin API health",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_api_health() -> dict[str, Any]:
+    """Return local API health, app version, and compatibility findings."""
+    try:
+        client = ApiClient()
+        health = client.health()
+        compatibility = client.check_compatibility()
+        return {
+            "ok": True,
+            "health": health,
+            "version": compatibility["version"],
+            "compatibility": compatibility,
+        }
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_list_bots",
+    annotations={
+        "title": "List OpenMausBot bots",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_list_bots(include_soul: bool = False) -> dict[str, Any]:
+    """List bots without long soul text unless explicitly requested."""
+    try:
+        return {"ok": True, **ApiClient().list_bots(include_soul=include_soul)}
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_list_routines",
+    annotations={
+        "title": "List OpenMausBot routines",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_list_routines(
+    from_ms: Annotated[
+        int | None, Field(ge=0, description="Optional range start in Unix ms.")
+    ] = None,
+    to_ms: Annotated[int | None, Field(ge=0, description="Optional range end in Unix ms.")] = None,
+) -> dict[str, Any]:
+    """List routines and runs, optionally within a millisecond range."""
+    try:
+        return {"ok": True, **ApiClient().list_routines(from_ms=from_ms, to_ms=to_ms)}
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_list_webhooks",
+    annotations={
+        "title": "List redacted OpenMausBot webhooks",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_list_webhooks() -> dict[str, Any]:
+    """List webhooks and attempts with secret material redacted."""
+    try:
+        return {"ok": True, **ApiClient().list_webhooks()}
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_usage",
+    annotations={
+        "title": "Read OpenMausBot usage",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_usage(
+    from_date: Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD")],
+    to_date: Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD")],
+    group_by: Annotated[
+        str | None,
+        Field(min_length=1, max_length=120, description="Optional API grouping dimension."),
+    ] = None,
+) -> dict[str, Any]:
+    """Read usage for a date range of no more than one year."""
+    try:
+        return {
+            "ok": True,
+            **ApiClient().usage(from_date=from_date, to_date=to_date, group_by=group_by),
+        }
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_list_models",
+    annotations={
+        "title": "List OpenMausBot models",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_list_models() -> dict[str, Any]:
+    """List provider instances and models without account details."""
+    try:
+        return {"ok": True, **ApiClient().list_models()}
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_list_decisions",
+    annotations={
+        "title": "List OpenMausBot decisions",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_list_decisions(
+    limit: Annotated[int, Field(ge=1, le=500, description="Number of decisions to return.")] = 50,
+) -> dict[str, Any]:
+    """List recent decisions."""
+    try:
+        return {"ok": True, **ApiClient().decisions(limit=limit)}
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_export_team",
+    annotations={
+        "title": "Export OpenMausBot team data",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_export_team(
+    format: Annotated[
+        Literal["manifest", "package", "backup"],
+        Field(description="Team export format."),
+    ] = "manifest",
+) -> dict[str, Any]:
+    """Export team data using a paired-device session token."""
+    try:
+        return {"ok": True, **ApiClient().export_team(format=format)}
+    except OpenMausBotApiError as exc:
+        return _error(exc)
 
 
 def main() -> None:
