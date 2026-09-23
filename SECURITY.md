@@ -23,6 +23,16 @@ only returns an export. Pair through the OpenMausBot app and provide the token
 directly or through an explicitly configured macOS Keychain service. Tokens
 are never logged, printed, or included in tool results.
 
+MCP administration mutations have an additional opt-in gate:
+`OPENMAUSBOT_ENABLE_ADMIN_WRITES=1`. CLI mutations instead require an explicit `--apply`; both
+interfaces default to dry runs. Applied PATCH and POST operations are read back through the API and
+reported as unknown if requested fields do not converge.
+
+Bot updates that turn computer access on, move it from browser-only to local, or add an MCP server
+are treated as access loosening and require an explicit `allow_loosen` confirmation. Operators can
+also set `OPENMAUSBOT_MCP_ALLOWLIST` to a comma-separated list; a bot update containing any other
+MCP server name is refused even when loosening was confirmed.
+
 Webhook secrets, token-like fields, webhook delivery URLs containing
 `/hooks/`, and provider account emails are removed or redacted before admin
 results are returned.

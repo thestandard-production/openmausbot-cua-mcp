@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "bots": [
+    {
+      "name": "research-bot",
+      "title": "Research",
+      "description": "Collects and organizes source material.",
+      "soul_file": "souls/research.md",
+      "soul_append_files": [
+        "souls/common.md"
+      ],
+      "modelSelection": {
+        "instanceId": "provider-instance",
+        "model": "model-id",
+        "effort": "medium"
+      },
+      "computer": "off",
+      "mcpServers": [],
+      "allow_loosen": false
+    }
+  ],
+  "routines": [
+    {
+      "name": "daily-summary",
+      "bot": "research-bot",
+      "prompt_file": "prompts/daily-summary.md",
+      "schedule": {
+        "type": "daily",
+        "time": "09:00",
+        "weekdays": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "enabled": true,
+      "runOn": "maus",
+      "durationMinutes": 30,
+      "overlap": "skip"
+    }
+  ]
+}

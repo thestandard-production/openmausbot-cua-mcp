@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from . import admin, desired
 from .api import ApiClient, OpenMausBotApiError
 from .bridge import (
     OpenMausBotConnectionError,
@@ -16,6 +17,7 @@ from .bridge import (
     run_cua,
     write_companion_setting,
 )
+from .guards import writes_enabled
 
 mcp = FastMCP("openmausbot_cua_mcp")
 
@@ -32,6 +34,16 @@ ToolName = Annotated[
 
 def _error(exc: Exception) -> dict[str, Any]:
     return {"ok": False, "error": str(exc)}
+
+
+def _writes_disabled() -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": (
+            "admin writes are disabled; set OPENMAUSBOT_ENABLE_ADMIN_WRITES=1 and provide a "
+            "paired session token"
+        ),
+    }
 
 
 @mcp.tool(
@@ -391,6 +403,200 @@ def openmausbot_export_team(
     """Export team data using a paired-device session token."""
     try:
         return {"ok": True, **ApiClient().export_team(format=format)}
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_plan",
+    annotations={
+        "title": "Plan OpenMausBot desired state",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_plan(
+    path: Annotated[str, Field(min_length=1, description="Desired-state JSON or YAML file path.")],
+) -> dict[str, Any]:
+    """Plan desired-state changes without sending any mutation."""
+    try:
+        return desired.plan(ApiClient(), path)
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_update_bot",
+    annotations={
+        "title": "Update an OpenMausBot bot",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_update_bot(
+    bot: Annotated[str, Field(min_length=1, description="Exact bot id or unique exact name.")],
+    patch: Annotated[dict[str, Any], Field(description="Allowed bot fields to update.")],
+    allow_loosen: bool = False,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Plan or apply a guarded bot update."""
+    if not writes_enabled():
+        return _writes_disabled()
+    try:
+        return admin.update_bot(
+            ApiClient(), bot, patch, allow_loosen=allow_loosen, dry_run=dry_run
+        )
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_set_bot_model",
+    annotations={
+        "title": "Set an OpenMausBot bot model",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_set_bot_model(
+    bot: Annotated[str, Field(min_length=1, description="Exact bot id or unique exact name.")],
+    instance_id: Annotated[str, Field(min_length=1, description="Provider instance id.")],
+    model: Annotated[str, Field(min_length=1, description="Exact offered model id.")],
+    effort: Annotated[str | None, Field(description="Optional supported effort level.")] = None,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Plan or apply a validated model selection."""
+    if not writes_enabled():
+        return _writes_disabled()
+    try:
+        return admin.set_bot_model(
+            ApiClient(), bot, instance_id, model, effort=effort, dry_run=dry_run
+        )
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_upsert_routine",
+    annotations={
+        "title": "Create or update an OpenMausBot routine",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_upsert_routine(
+    spec: Annotated[dict[str, Any], Field(description="Routine spec using bot name or id.")],
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Plan or apply a name-idempotent routine upsert."""
+    if not writes_enabled():
+        return _writes_disabled()
+    try:
+        return admin.upsert_routine(ApiClient(), spec, dry_run=dry_run)
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_set_routine_enabled",
+    annotations={
+        "title": "Enable or disable an OpenMausBot routine",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_set_routine_enabled(
+    routine: Annotated[str, Field(min_length=1, description="Exact routine id or name.")],
+    enabled: bool,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Plan or apply one routine's enabled state."""
+    if not writes_enabled():
+        return _writes_disabled()
+    try:
+        return admin.set_routine_enabled(ApiClient(), routine, enabled, dry_run=dry_run)
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_run_routine_now",
+    annotations={
+        "title": "Run an OpenMausBot routine now",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_run_routine_now(
+    routine: Annotated[str, Field(min_length=1, description="Exact routine id or name.")],
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Plan or start one routine immediately."""
+    if not writes_enabled():
+        return _writes_disabled()
+    try:
+        return admin.run_routine_now(ApiClient(), routine, dry_run=dry_run)
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_delete_routine",
+    annotations={
+        "title": "Delete an OpenMausBot routine",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_delete_routine(
+    routine: Annotated[str, Field(min_length=1, description="Exact routine id or name.")],
+    confirm_name: Annotated[str, Field(min_length=1, description="Exact current routine name.")],
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Plan or delete one exactly confirmed routine."""
+    if not writes_enabled():
+        return _writes_disabled()
+    try:
+        return admin.delete_routine(
+            ApiClient(), routine, confirm_name=confirm_name, dry_run=dry_run
+        )
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_cancel_run",
+    annotations={
+        "title": "Cancel an OpenMausBot routine run",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_cancel_run(
+    run_id: Annotated[str, Field(min_length=1, description="Exact routine run id.")],
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Plan or cancel one routine run."""
+    if not writes_enabled():
+        return _writes_disabled()
+    try:
+        return admin.cancel_run(ApiClient(), run_id, dry_run=dry_run)
     except OpenMausBotApiError as exc:
         return _error(exc)
 

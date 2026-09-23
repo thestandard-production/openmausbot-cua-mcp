@@ -126,6 +126,8 @@ control this client:
 | `OPENMAUSBOT_TOKEN_KEYCHAIN_ACCOUNT` | Optional Keychain account used with the service |
 | `OPENMAUSBOT_API_TIMEOUT` | API request timeout in seconds; default 10 |
 | `OPENMAUSBOT_APP_PLIST` | App `Info.plist` override for version detection |
+| `OPENMAUSBOT_ENABLE_ADMIN_WRITES` | Set to `1` to enable MCP administration write tools |
+| `OPENMAUSBOT_MCP_ALLOWLIST` | Optional comma-separated MCP server names allowed on bots |
 
 Port discovery never sends the token, and a token is only ever sent to an origin
 you named explicitly with `OPENMAUSBOT_URL` or `OMB_PORT` (the same rule as
@@ -133,6 +135,91 @@ OpenMausBot's own MCP client): a port found by probing could belong to another
 local process. Reads against a discovered port work without the token; requests
 that need it fail with a message asking you to set the origin. No request sends
 a browser `Origin` header. Server error messages are passed through (bounded).
+
+## Admin API (writes)
+
+Administration writes use two independent gates:
+
+- Every mutation requires a paired-device session token and an explicit API origin through
+  `OPENMAUSBOT_URL` or `OMB_PORT`.
+- MCP write tools are disabled unless `OPENMAUSBOT_ENABLE_ADMIN_WRITES=1`. The `omb-ctl` CLI does
+  not use that environment gate; it requires `--apply` for each mutation.
+
+All write tools and CLI commands are dry runs by default. An applied PATCH or POST is followed by a
+fresh GET and field-by-field verification. If the read-back does not match, the result has
+`"ok": false`, `"status": "unknown"`, and lists the mismatched fields. Routine creation is
+idempotent by exact routine name because the public create endpoint has no idempotency key;
+duplicate names must be resolved in the app first.
+
+MCP write tools include guarded bot updates and model selection, routine upsert/enable/run/delete,
+and run cancellation. `openmausbot_plan` is read-only and plans a desired-state file; applying a
+desired-state item is intentionally CLI-only.
+
+```bash
+# Dry run (no mutation)
+omb-ctl bot-update research-bot --json '{"title":"Research"}'
+omb-ctl routine-enable daily-summary
+
+# Apply and verify
+omb-ctl bot-update research-bot --json '{"title":"Research"}' --apply
+omb-ctl routine-enable daily-summary --apply
+```
+
+Desired-state files are JSON, with YAML available through the optional `yaml` extra. Referenced
+files must be relative to the desired file and stay within its directory. Only fields present in a
+bot entry are managed.
+
+```json
+{
+  "version": 1,
+  "bots": [
+    {
+      "name": "research-bot",
+      "title": "Research",
+      "soul_file": "souls/research.md",
+      "soul_append_files": ["souls/common.md"],
+      "computer": "off",
+      "mcpServers": [],
+      "allow_loosen": false
+    }
+  ],
+  "routines": [
+    {
+      "name": "daily-summary",
+      "bot": "research-bot",
+      "prompt_file": "prompts/daily-summary.md",
+      "schedule": {"type": "daily", "time": "09:00", "weekdays": [1, 2, 3, 4, 5]},
+      "enabled": true,
+      "runOn": "maus",
+      "durationMinutes": 30,
+      "overlap": "skip"
+    }
+  ]
+}
+```
+
+Routine schedules are validated against, and normalized to, the shape OpenMausBot stores, so an
+unchanged desired state plans as a no-op and a read-back compares equal:
+
+| `type` | Fields | Notes |
+| --- | --- | --- |
+| `once` | `at` | Epoch milliseconds or RFC3339 with an offset (converted to epoch ms) |
+| `daily` | `time`, `weekdays` | `HH:MM`; weekdays as `0`-`6` (Sunday = 0) or names; omitted means every day |
+| `interval` | `everyMinutes`, `anchorAt`, optional `weekdays`, `window`, `endsAt` | 5-1440 minutes; `anchorAt` (first run) is required; all seven weekdays is stored as no restriction |
+| `cron` | `expression`, `timeZone` | Five fields; an IANA `timeZone` such as `Asia/Bangkok` or `UTC` is required |
+
+Routine `name` and `prompt` are trimmed the same way the app trims them.
+
+Plan the entire file, then select exactly one item to apply:
+
+```bash
+omb-ctl plan examples/desired.example.json
+omb-ctl apply examples/desired.example.json --only bot:research-bot
+omb-ctl apply examples/desired.example.json --only bot:research-bot --apply
+```
+
+CLI exit codes are `0` for success or no change, `10` when a plan or dry run contains a change, and
+`2` for an error, unknown write status, or verification mismatch.
 
 ## Configuration
 
