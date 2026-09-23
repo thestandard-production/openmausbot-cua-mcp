@@ -4,9 +4,10 @@ A local [Model Context Protocol](https://modelcontextprotocol.io/) server that
 connects Claude, MiniMax, Codex, and other MCP clients to the `cua-driver`
 bundled with OpenMausBot.
 
-The server discovers OpenMausBot's current embedded socket on every call. It
-does not install a background daemon, open a TCP port, or bypass OpenMausBot's
-permission mode.
+The server discovers OpenMausBot's current embedded socket on every CUA call.
+It never listens on a TCP port or installs a background daemon. Admin tools
+connect outward to OpenMausBot's loopback API, and all tools preserve
+OpenMausBot's permission model.
 
 ## Requirements
 
@@ -75,6 +76,63 @@ Typical sequence:
 2. Call `openmausbot_list_cua_tools`.
 3. Call `openmausbot_describe_cua_tool` for the chosen tool.
 4. Call `openmausbot_call_cua_tool` with an `arguments` object matching that schema.
+
+## Admin API (read-only)
+
+The server also exposes bounded administration views from OpenMausBot's local
+API. Sensitive webhook values and provider account emails are removed before
+results reach the MCP client.
+
+| Tool | Result |
+| --- | --- |
+| `openmausbot_api_health` | API health, installed app version, and compatibility findings |
+| `openmausbot_list_bots` | Bots, omitting soul text by default |
+| `openmausbot_list_routines` | Routines and runs, optionally within a millisecond range |
+| `openmausbot_list_webhooks` | Webhooks and attempts with sensitive values redacted |
+| `openmausbot_usage` | Usage and billing summaries for a date range of up to one year |
+| `openmausbot_list_models` | Provider instances, model options, and effort levels |
+| `openmausbot_list_decisions` | Recent decisions, with a limit from 1 to 500 |
+| `openmausbot_export_team` | Team export in manifest, package, or backup format |
+
+`openmausbot_export_team` calls OpenMausBot's export endpoint, which is a POST
+route and therefore requires a paired-device session token. Pairing is always
+completed through the OpenMausBot app; this package does not create sessions.
+
+The same views are available from `omb-ctl`. JSON is the default output. Bots
+and routines also support a compact text table.
+
+```bash
+omb-ctl status
+omb-ctl bots --text
+omb-ctl bots --include-soul
+omb-ctl routines --since-hours 24 --text
+omb-ctl webhooks
+omb-ctl usage --from 2026-01-01 --to 2026-01-31 --group-by model
+omb-ctl models
+omb-ctl decisions --limit 100
+omb-ctl export --format manifest
+```
+
+The Admin API client checks `127.0.0.1` ports 8799, 18799, and 28799 when no
+origin or port override is configured. The following environment variables
+control this client:
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENMAUSBOT_URL` | API origin override; HTTP is restricted to loopback hosts |
+| `OMB_PORT` | Loopback API port override used when no URL override is set |
+| `OPENMAUSBOT_TOKEN` | Paired-device session token |
+| `OPENMAUSBOT_TOKEN_KEYCHAIN_SERVICE` | macOS Keychain service containing the token |
+| `OPENMAUSBOT_TOKEN_KEYCHAIN_ACCOUNT` | Optional Keychain account used with the service |
+| `OPENMAUSBOT_API_TIMEOUT` | API request timeout in seconds; default 10 |
+| `OPENMAUSBOT_APP_PLIST` | App `Info.plist` override for version detection |
+
+Port discovery never sends the token, and a token is only ever sent to an origin
+you named explicitly with `OPENMAUSBOT_URL` or `OMB_PORT` (the same rule as
+OpenMausBot's own MCP client): a port found by probing could belong to another
+local process. Reads against a discovered port work without the token; requests
+that need it fail with a message asking you to set the origin. No request sends
+a browser `Origin` header. Server error messages are passed through (bounded).
 
 ## Configuration
 
