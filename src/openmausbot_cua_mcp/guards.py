@@ -18,6 +18,19 @@ BOT_FIELDS = {
 }
 SOUL_MAX_BYTES = 24_000
 
+# Values OpenMausBot accepts for a bot's computer setting (0.1.85 and 0.1.86). `None` (JSON null)
+# clears the setting, which the app treats as "Auto": availability is decided when a task starts,
+# so it may end up on the local computer. Rank = how much reach the setting grants; Auto is ranked
+# with "local" because it can resolve to it.
+COMPUTER_RANK: dict[str | None, int] = {
+    "off": 0,
+    "browser": 1,
+    "cloud": 2,
+    "vm": 2,
+    "local": 3,
+    None: 3,
+}
+
 
 def _bounded_string(value: Any, field: str, maximum: int) -> None:
     if not isinstance(value, str):
@@ -52,9 +65,11 @@ def validate_bot_patch(patch: Any) -> dict[str, Any]:
             raise OpenMausBotApiError(
                 f"Bot soul is {size} UTF-8 bytes; maximum is {SOUL_MAX_BYTES}."
             )
-    if "computer" in patch and patch["computer"] not in {"off", "browser", "local"}:
-        raise OpenMausBotApiError("Bot computer must be off, browser, or local.")
-    if "mcpServers" in patch:
+    if "computer" in patch and patch["computer"] not in COMPUTER_RANK:
+        raise OpenMausBotApiError(
+            "Bot computer must be off, browser, cloud, vm, local, or null (Auto)."
+        )
+    if "mcpServers" in patch and patch["mcpServers"] is not None:
         servers = patch["mcpServers"]
         if not isinstance(servers, list) or not all(
             isinstance(server, str) and server for server in servers
@@ -81,31 +96,50 @@ def validate_bot_patch(patch: Any) -> dict[str, Any]:
     return patch
 
 
+def _computer_label(value: str | None) -> str:
+    return "Auto (unset)" if value is None else value
+
+
 def loosening(current_bot: dict[str, Any], patch: dict[str, Any]) -> list[str]:
-    """Describe access changes that widen a bot's capabilities."""
+    """Describe access changes that widen a bot's capabilities.
+
+    OpenMausBot omits unset fields from bot objects, so a missing `computer` or `mcpServers`
+    key means the setting is unset (Auto / the app default), not "off" / "none".
+    """
     reasons: list[str] = []
     if "computer" in patch:
-        current = current_bot.get("computer") or "off"
+        current = current_bot.get("computer")
         requested = patch["computer"]
-        if current == "off" and requested in {"browser", "local"}:
-            reasons.append(f"computer changes from {current} to {requested}")
-        elif current == "browser" and requested == "local":
-            reasons.append("computer changes from browser to local")
+        if COMPUTER_RANK.get(requested, 3) > COMPUTER_RANK.get(current, 3):
+            reasons.append(
+                f"computer changes from {_computer_label(current)} to {_computer_label(requested)}"
+            )
 
     if "mcpServers" in patch:
         current_servers = current_bot.get("mcpServers")
-        existing = set(current_servers) if isinstance(current_servers, list) else set()
-        for server in patch["mcpServers"]:
-            if server not in existing:
-                reasons.append(f"mcpServers adds {server}")
+        requested_servers = patch["mcpServers"]
+        if requested_servers is None:
+            if isinstance(current_servers, list):
+                reasons.append("mcpServers reset to the app default (all configured servers)")
+        elif isinstance(current_servers, list):
+            existing = set(current_servers)
+            for server in requested_servers:
+                if server not in existing:
+                    reasons.append(f"mcpServers adds {server}")
+        # current unset = app default (all servers) → any explicit list narrows access
     return reasons
 
 
-def enforce_mcp_allowlist(servers: list[str]) -> None:
+def enforce_mcp_allowlist(servers: list[str] | None) -> None:
     """Refuse MCP servers outside the configured allowlist, when one is set."""
     raw = os.environ.get("OPENMAUSBOT_MCP_ALLOWLIST")
     if raw is None:
         return
+    if servers is None:
+        raise OpenMausBotApiError(
+            "mcpServers null resets to the app default (all servers), which "
+            "OPENMAUSBOT_MCP_ALLOWLIST cannot bound; list the servers explicitly."
+        )
     allowed = {item.strip() for item in raw.split(",") if item.strip()}
     refused = sorted(set(servers) - allowed)
     if refused:

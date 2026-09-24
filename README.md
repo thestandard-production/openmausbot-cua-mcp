@@ -198,6 +198,11 @@ bot entry are managed.
 }
 ```
 
+Bot `computer` accepts `off`, `browser`, `cloud`, `vm`, `local`, or `null`. OpenMausBot omits unset
+fields from bot objects: an unset `computer` means **Auto** (it may resolve to the local computer) and an
+unset `mcpServers` means **every configured MCP server**. The loosening guard ranks reach as
+`off < browser < cloud = vm < local = Auto`, and treats resetting `mcpServers` to `null` as widening.
+
 Routine schedules are validated against, and normalized to, the shape OpenMausBot stores, so an
 unchanged desired state plans as a no-op and a read-back compares equal:
 
