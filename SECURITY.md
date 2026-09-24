@@ -28,8 +28,10 @@ MCP administration mutations have an additional opt-in gate:
 interfaces default to dry runs. Applied PATCH and POST operations are read back through the API and
 reported as unknown if requested fields do not converge.
 
-Bot updates that turn computer access on, move it from browser-only to local, or add an MCP server
-are treated as access loosening and require an explicit `allow_loosen` confirmation. Operators can
+Bot updates that turn computer access on, move it from browser-only to local, add an MCP server,
+turn connected apps (`composio`) or the built-in browser on, or move the working folder (`cwd`) are
+treated as access loosening and require an explicit `allow_loosen` confirmation. `approvalMode` can
+only be set to `ask`; widening approvals is left to a person in the OpenMausBot app. Operators can
 also set `OPENMAUSBOT_MCP_ALLOWLIST` to a comma-separated list; a bot update containing any other
 MCP server name is refused even when loosening was confirmed.
 
@@ -42,6 +44,6 @@ results are returned.
 Open a private GitHub security advisory in this repository. Do not include API
 keys, access tokens, private file contents, or personal information in reports.
 
-Unset bot settings are not treated as "off": OpenMausBot reads an unset `computer` as Auto and an
-unset `mcpServers` as all configured servers, so the loosening guard counts moving to either as a
+Unset bot settings are not treated as "off": OpenMausBot reads an unset `computer` as Auto, an
+unset `mcpServers` as all configured servers, and unset `composio` / `browser` as on, so the loosening guard counts moving to either as a
 widening change, and `OPENMAUSBOT_MCP_ALLOWLIST` refuses a reset of `mcpServers` to `null`.
