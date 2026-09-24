@@ -41,3 +41,7 @@ results are returned.
 
 Open a private GitHub security advisory in this repository. Do not include API
 keys, access tokens, private file contents, or personal information in reports.
+
+Unset bot settings are not treated as "off": OpenMausBot reads an unset `computer` as Auto and an
+unset `mcpServers` as all configured servers, so the loosening guard counts moving to either as a
+widening change, and `OPENMAUSBOT_MCP_ALLOWLIST` refuses a reset of `mcpServers` to `null`.

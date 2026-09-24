@@ -284,3 +284,52 @@ def test_normalize_schedule_matches_server_canonical_shapes() -> None:
 def test_normalize_schedule_rejects_what_the_server_rejects(schedule, message) -> None:
     with pytest.raises(OpenMausBotApiError, match=message):
         admin.normalize_schedule(schedule)
+
+
+@pytest.mark.parametrize(
+    ("current", "requested", "loosens"),
+    [
+        # OpenMausBot omits unset fields: no "computer" key means Auto (may resolve local).
+        ({}, {"computer": "off"}, False),
+        ({}, {"computer": "browser"}, False),
+        ({"computer": "off"}, {"computer": None}, True),
+        ({"computer": "off"}, {"computer": "cloud"}, True),
+        ({"computer": "browser"}, {"computer": "vm"}, True),
+        ({"computer": "local"}, {"computer": "browser"}, False),
+        ({"computer": "vm"}, {"computer": "cloud"}, False),
+        # mcpServers unset = every configured server; an explicit list only narrows that.
+        ({}, {"mcpServers": ["docs"]}, False),
+        ({"mcpServers": []}, {"mcpServers": None}, True),
+        ({"mcpServers": ["docs"]}, {"mcpServers": ["docs", "mail"]}, True),
+        ({"mcpServers": ["docs", "mail"]}, {"mcpServers": ["docs"]}, False),
+    ],
+)
+def test_loosening_uses_app_semantics_for_unset_fields(current, requested, loosens) -> None:
+    from openmausbot_cua_mcp.guards import loosening
+
+    assert bool(loosening(current, requested)) is loosens
+
+
+def test_computer_values_match_the_app() -> None:
+    for value in ("off", "browser", "cloud", "vm", "local", None):
+        assert validate_bot_patch({"computer": value}) == {"computer": value}
+    with pytest.raises(OpenMausBotApiError, match="null \\(Auto\\)"):
+        validate_bot_patch({"computer": "remote"})
+    assert validate_bot_patch({"mcpServers": None}) == {"mcpServers": None}
+
+
+def test_allowlist_refuses_mcp_reset_to_default(monkeypatch) -> None:
+    from openmausbot_cua_mcp.guards import enforce_mcp_allowlist
+
+    monkeypatch.setenv("OPENMAUSBOT_MCP_ALLOWLIST", "docs")
+    with pytest.raises(OpenMausBotApiError, match="cannot bound"):
+        enforce_mcp_allowlist(None)
+    enforce_mcp_allowlist(["docs"])
+
+
+def test_tightening_an_auto_bot_needs_no_confirmation(fake_api) -> None:
+    state, origin = fake_api
+    _configure_bot(state, {"id": "bot-1", "name": "research-bot"})  # computer unset = Auto
+    result = admin.update_bot(ApiClient(origin), "bot-1", {"computer": "off"})
+    assert result["action"] == "update"
+    assert result["request"]["body"] == {"computer": "off"}
