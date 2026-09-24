@@ -439,7 +439,15 @@ def openmausbot_plan(
 )
 def openmausbot_update_bot(
     bot: Annotated[str, Field(min_length=1, description="Exact bot id or unique exact name.")],
-    patch: Annotated[dict[str, Any], Field(description="Allowed bot fields to update.")],
+    patch: Annotated[
+        dict[str, Any],
+        Field(
+            description=(
+                "Bot fields to update: name, title, description, soul, modelSelection, computer, "
+                "mcpServers, composio, browser, cwd, approvalMode ('ask' only)."
+            )
+        ),
+    ],
     allow_loosen: bool = False,
     dry_run: bool = True,
 ) -> dict[str, Any]:

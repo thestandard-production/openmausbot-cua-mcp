@@ -19,8 +19,13 @@ BOT_ENTRY_FIELDS = {
     "modelSelection",
     "computer",
     "mcpServers",
+    "composio",
+    "browser",
+    "cwd",
+    "approvalMode",
     "allow_loosen",
 }
+BOT_PATCH_KEYS = BOT_ENTRY_FIELDS - {"id", "soul_file", "soul_append_files", "allow_loosen"}
 ROUTINE_ENTRY_FIELDS = (admin.ROUTINE_FIELDS - {"prompt"}) | {"prompt_file"}
 
 
@@ -95,11 +100,7 @@ def _bot_item(entry: Any, base: Path) -> tuple[str, dict[str, Any], bool]:
         raise OpenMausBotApiError("Desired bot id must be a non-empty string.")
     if "allow_loosen" in entry and not isinstance(entry["allow_loosen"], bool):
         raise OpenMausBotApiError("Desired bot allow_loosen must be a boolean.")
-    patch = {
-        key: value
-        for key, value in entry.items()
-        if key in {"name", "title", "description", "modelSelection", "computer", "mcpServers"}
-    }
+    patch = {key: value for key, value in entry.items() if key in BOT_PATCH_KEYS}
     append_files = entry.get("soul_append_files", [])
     if not isinstance(append_files, list):
         raise OpenMausBotApiError("Desired bot soul_append_files must be a list.")

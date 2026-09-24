@@ -179,7 +179,10 @@ bot entry are managed.
       "soul_file": "souls/research.md",
       "soul_append_files": ["souls/common.md"],
       "computer": "off",
+      "browser": false,
+      "composio": false,
       "mcpServers": [],
+      "approvalMode": "ask",
       "allow_loosen": false
     }
   ],
@@ -202,6 +205,17 @@ Bot `computer` accepts `off`, `browser`, `cloud`, `vm`, `local`, or `null`. Open
 fields from bot objects: an unset `computer` means **Auto** (it may resolve to the local computer) and an
 unset `mcpServers` means **every configured MCP server**. The loosening guard ranks reach as
 `off < browser < cloud = vm < local = Auto`, and treats resetting `mcpServers` to `null` as widening.
+
+`composio` (connected apps) and `browser` (built-in browser) are booleans that OpenMausBot treats as
+**on unless explicitly `false`**. Connected apps are one switch per bot: a bot with `composio` on can
+use every connected account, not a chosen subset. Turning either on needs `allow_loosen`.
+
+`cwd` sets the bot's working folder (an absolute path, or `null` to clear it). OpenMausBot pins a
+thread's folder on its first turn, so a new `cwd` applies to new threads only. Any change needs
+`allow_loosen`, because it changes which files the bot works on.
+
+`approvalMode` can only be set to `ask`. Loosen approvals in the OpenMausBot app, where a person sees
+each change.
 
 Routine schedules are validated against, and normalized to, the shape OpenMausBot stores, so an
 unchanged desired state plans as a no-op and a read-back compares equal:

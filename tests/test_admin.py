@@ -116,9 +116,11 @@ def test_readback_mismatch_is_unknown_and_cli_exit_2(fake_api, monkeypatch) -> N
     assert main(["bot-update", "bot-1", "--json", '{"title":"New"}', "--apply"]) == 2
 
 
-def test_bot_patch_rejects_approval_mode_and_large_soul() -> None:
-    with pytest.raises(OpenMausBotApiError, match="per-thread"):
-        validate_bot_patch({"approvalMode": "auto"})
+def test_bot_patch_allows_only_ask_approval_and_rejects_large_soul() -> None:
+    assert validate_bot_patch({"approvalMode": "ask"}) == {"approvalMode": "ask"}
+    for mode in ("auto", "full", "custom"):
+        with pytest.raises(OpenMausBotApiError, match="only sets a bot's approvalMode to 'ask'"):
+            validate_bot_patch({"approvalMode": mode})
     with pytest.raises(OpenMausBotApiError, match=str(SOUL_MAX_BYTES)):
         validate_bot_patch({"soul": "é" * (SOUL_MAX_BYTES // 2 + 1)})
 
@@ -302,6 +304,17 @@ def test_normalize_schedule_rejects_what_the_server_rejects(schedule, message) -
         ({"mcpServers": []}, {"mcpServers": None}, True),
         ({"mcpServers": ["docs"]}, {"mcpServers": ["docs", "mail"]}, True),
         ({"mcpServers": ["docs", "mail"]}, {"mcpServers": ["docs"]}, False),
+        # composio / browser are on unless explicitly false.
+        ({}, {"composio": False}, False),
+        ({}, {"composio": True}, False),
+        ({"composio": False}, {"composio": True}, True),
+        ({"browser": False}, {"browser": True}, True),
+        ({"browser": True}, {"browser": False}, False),
+        # Any working-folder move needs confirmation.
+        ({"cwd": "/work/a"}, {"cwd": "/work/b"}, True),
+        ({"cwd": "/work/a"}, {"cwd": "/work/a/"}, False),
+        ({}, {"cwd": None}, False),
+        ({}, {"cwd": "/work/a"}, True),
     ],
 )
 def test_loosening_uses_app_semantics_for_unset_fields(current, requested, loosens) -> None:
@@ -316,6 +329,47 @@ def test_computer_values_match_the_app() -> None:
     with pytest.raises(OpenMausBotApiError, match="null \\(Auto\\)"):
         validate_bot_patch({"computer": "remote"})
     assert validate_bot_patch({"mcpServers": None}) == {"mcpServers": None}
+
+
+def test_switch_and_cwd_values_are_validated() -> None:
+    for field in ("composio", "browser"):
+        assert validate_bot_patch({field: False}) == {field: False}
+        with pytest.raises(OpenMausBotApiError, match="true or false"):
+            validate_bot_patch({field: "off"})
+    assert validate_bot_patch({"cwd": "/work/a/../b/"}) == {"cwd": "/work/b"}
+    assert validate_bot_patch({"cwd": " "}) == {"cwd": None}
+    assert validate_bot_patch({"cwd": None}) == {"cwd": None}
+    with pytest.raises(OpenMausBotApiError, match="absolute path"):
+        validate_bot_patch({"cwd": "relative/dir"})
+
+
+def test_turning_everything_off_needs_no_confirmation_and_reads_back(
+    fake_api, monkeypatch
+) -> None:
+    state, origin = fake_api
+    monkeypatch.setenv("OPENMAUSBOT_TOKEN", "paired-session")
+    bot = {"id": "bot-1", "name": "research-bot"}  # all switches unset = widest
+    _configure_bot(state, bot)
+    patch = {"computer": "off", "browser": False, "composio": False, "mcpServers": []}
+
+    def patched(request: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        bot.update(request["body"])
+        return 200, {"bot": bot}
+
+    state["responses"][("PATCH", "/api/bots/bot-1")] = patched
+    result = admin.update_bot(ApiClient(origin), "bot-1", patch, dry_run=False)
+    assert result["verified"] is True
+    assert result["request"]["body"] == patch
+
+
+def test_moving_the_working_folder_needs_confirmation(fake_api) -> None:
+    state, origin = fake_api
+    _configure_bot(state, {"id": "bot-1", "name": "dev-bot", "cwd": "/work/main"})
+    client = ApiClient(origin)
+    with pytest.raises(OpenMausBotApiError, match="working folder changes"):
+        admin.update_bot(client, "bot-1", {"cwd": "/work/sandbox"})
+    planned = admin.update_bot(client, "bot-1", {"cwd": "/work/sandbox"}, allow_loosen=True)
+    assert planned["request"]["body"] == {"cwd": "/work/sandbox"}
 
 
 def test_allowlist_refuses_mcp_reset_to_default(monkeypatch) -> None:

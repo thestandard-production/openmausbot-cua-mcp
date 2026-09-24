@@ -147,7 +147,7 @@ def update_bot(
 ) -> dict[str, Any]:
     """Update only changed bot fields with access-widening guards."""
     _ensure_compatible(client)
-    validate_bot_patch(patch)
+    patch = validate_bot_patch(patch)
     bot = _resolve_named(_bots(client), bot_id_or_name, kind="bot")
     if "mcpServers" in patch:
         enforce_mcp_allowlist(patch["mcpServers"])

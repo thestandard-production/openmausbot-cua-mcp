@@ -15,8 +15,17 @@ BOT_FIELDS = {
     "modelSelection",
     "computer",
     "mcpServers",
+    "composio",
+    "browser",
+    "cwd",
+    "approvalMode",
 }
 SOUL_MAX_BYTES = 24_000
+CWD_MAX_CHARS = 4096
+
+# Switches OpenMausBot treats as on unless explicitly false: `composio` gives the bot every
+# connected app (one shared account session, not per app) and `browser` the built-in browser.
+ON_UNLESS_FALSE = {"composio": "connected apps (composio)", "browser": "built-in browser"}
 
 # Values OpenMausBot accepts for a bot's computer setting (0.1.85 and 0.1.86). `None` (JSON null)
 # clears the setting, which the app treats as "Auto": availability is decided when a task starts,
@@ -39,14 +48,32 @@ def _bounded_string(value: Any, field: str, maximum: int) -> None:
         raise OpenMausBotApiError(f"Bot {field} must be at most {maximum} characters.")
 
 
+def normalize_cwd(value: Any) -> str | None:
+    """Return the working folder the server will store, or None to clear it."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise OpenMausBotApiError("Bot cwd must be an absolute path or null.")
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    home_relative = trimmed == "~" or trimmed.startswith("~/")
+    expanded = os.path.expanduser(trimmed) if home_relative else trimmed
+    if not os.path.isabs(expanded):
+        raise OpenMausBotApiError("Bot cwd must be an absolute path or null.")
+    if len(expanded) > CWD_MAX_CHARS:
+        raise OpenMausBotApiError(f"Bot cwd must be at most {CWD_MAX_CHARS} characters.")
+    return os.path.normpath(expanded)
+
+
 def validate_bot_patch(patch: Any) -> dict[str, Any]:
-    """Validate a bot patch and return it unchanged."""
+    """Validate a bot patch and return it with `cwd` normalized the way the server stores it."""
     if not isinstance(patch, dict):
         raise OpenMausBotApiError("Bot patch must be a JSON object.")
-    if "approvalMode" in patch:
+    if "approvalMode" in patch and patch["approvalMode"] != "ask":
         raise OpenMausBotApiError(
-            "approvalMode is a per-thread setting, not a bot field; update it on a task/thread "
-            "in the OpenMausBot app."
+            "omb-ctl only sets a bot's approvalMode to 'ask'; loosen approvals in the "
+            "OpenMausBot app, where each change is seen by a person."
         )
     unknown = sorted(set(patch) - BOT_FIELDS)
     if unknown:
@@ -93,6 +120,11 @@ def validate_bot_patch(patch: Any) -> dict[str, Any]:
             not isinstance(selection["effort"], str) or not selection["effort"]
         ):
             raise OpenMausBotApiError("modelSelection.effort must be a non-empty string.")
+    for field in ON_UNLESS_FALSE:
+        if field in patch and not isinstance(patch[field], bool):
+            raise OpenMausBotApiError(f"Bot {field} must be true or false.")
+    if "cwd" in patch:
+        return {**patch, "cwd": normalize_cwd(patch["cwd"])}
     return patch
 
 
@@ -101,12 +133,24 @@ def _computer_label(value: str | None) -> str:
 
 
 def loosening(current_bot: dict[str, Any], patch: dict[str, Any]) -> list[str]:
-    """Describe access changes that widen a bot's capabilities.
+    """Describe access changes that widen or move a bot's reach.
 
-    OpenMausBot omits unset fields from bot objects, so a missing `computer` or `mcpServers`
-    key means the setting is unset (Auto / the app default), not "off" / "none".
+    OpenMausBot omits unset fields from bot objects, so a missing `computer`, `mcpServers`,
+    `composio` or `browser` key means the setting is unset (Auto / the app default / on), not
+    "off" / "none". A new working folder is listed too: it changes which files the bot touches.
     """
     reasons: list[str] = []
+    for field, label in ON_UNLESS_FALSE.items():
+        if field in patch and patch[field] is not False and current_bot.get(field) is False:
+            reasons.append(f"{label} turns on")
+    if "cwd" in patch:
+        current_cwd = current_bot.get("cwd") or None
+        requested_cwd = normalize_cwd(patch["cwd"])
+        if requested_cwd != current_cwd:
+            reasons.append(
+                f"working folder changes from {current_cwd or 'unset'} to "
+                f"{requested_cwd or 'unset'}"
+            )
     if "computer" in patch:
         current = current_bot.get("computer")
         requested = patch["computer"]
