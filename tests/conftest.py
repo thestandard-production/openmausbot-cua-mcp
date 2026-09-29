@@ -56,6 +56,7 @@ def fake_api(monkeypatch):
         do_GET = _serve
         do_PATCH = _serve
         do_POST = _serve
+        do_PUT = _serve
 
         def log_message(self, format: str, *args: Any) -> None:
             return

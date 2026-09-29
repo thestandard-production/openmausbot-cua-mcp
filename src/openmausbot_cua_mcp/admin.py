@@ -77,9 +77,7 @@ def _resolve_named(
     if not matches:
         raise OpenMausBotApiError(f"{kind.capitalize()} not found: {value}.")
     if len(matches) > 1:
-        raise OpenMausBotApiError(
-            f"Ambiguous {kind} name {value!r}; use its exact id instead."
-        )
+        raise OpenMausBotApiError(f"Ambiguous {kind} name {value!r}; use its exact id instead.")
     return matches[0]
 
 
@@ -210,6 +208,210 @@ def set_bot_model(
     if not isinstance(bot_id, str) or not bot_id:
         raise OpenMausBotApiError("The selected bot has no usable id.")
     return update_bot(client, bot_id, {"modelSelection": selection}, dry_run=dry_run)
+
+
+TEAM_NAME_MAX_CHARS = 60
+GENERAL_TEAM = "General"
+
+
+def _team_key(section: Any) -> str:
+    """OpenMausBot's section identity: trimmed label, empty for the unsectioned General team."""
+    return section.strip() if isinstance(section, str) else ""
+
+
+def _can_access_team(bot: dict[str, Any], section: str) -> bool:
+    """Mirror of OpenMausBot's canAccessTeam (peer-roster.js)."""
+    if section == _team_key(bot.get("section")):
+        return True
+    managed = bot.get("managedSections")
+    return bool(
+        bot.get("chiefOfStaff")
+        and isinstance(managed, list)
+        and any(isinstance(value, str) and _team_key(value) == section for value in managed)
+    )
+
+
+def _reach(bots: list[dict[str, Any]], sections: dict[str, str]) -> set[tuple[str, str]]:
+    """Directed (from, to) name pairs that can message each other under `sections`.
+
+    Mirrors canReachPeer except the shared-audience rule, which a team move does not change.
+    """
+    pairs = set()
+    for source in bots:
+        placed = {**source, "section": sections[source["id"]]}
+        peers = source.get("peers")
+        for target in bots:
+            if target["id"] == source["id"] or target.get("hidden"):
+                continue
+            if isinstance(peers, list) and target["id"] not in peers:
+                continue
+            if _can_access_team(placed, sections[target["id"]]):
+                pairs.add((source.get("name") or source["id"], target.get("name") or target["id"]))
+    return pairs
+
+
+def _chief_covered(bots: list[dict[str, Any]], sections: dict[str, str]) -> set[str]:
+    """Bots whose failures reach a Chief of Staff in their own team (the Chief itself excluded)."""
+    covered = set()
+    for bot in bots:
+        team = sections[bot["id"]]
+        if any(
+            other.get("chiefOfStaff") and other["id"] != bot["id"] and sections[other["id"]] == team
+            for other in bots
+        ):
+            covered.add(bot.get("name") or bot["id"])
+    return covered
+
+
+def _team_label(section: str) -> str:
+    return section or GENERAL_TEAM
+
+
+def list_teams(client: ApiClient) -> dict[str, Any]:
+    """Return each team with its members and Chief of Staff."""
+    bots = _bots(client)
+    named = client.list_teams().get("sections")
+    teams: dict[str, dict[str, Any]] = {}
+    for section in [""] + [_team_key(item) for item in named or [] if _team_key(item)]:
+        teams.setdefault(section, {"team": _team_label(section), "members": [], "chief": None})
+    for bot in bots:
+        if bot.get("hidden"):
+            continue
+        entry = teams.setdefault(
+            _team_key(bot.get("section")),
+            {"team": _team_label(_team_key(bot.get("section"))), "members": [], "chief": None},
+        )
+        entry["members"].append(bot.get("name"))
+        if bot.get("chiefOfStaff"):
+            entry["chief"] = bot.get("name")
+    return {"ok": True, "teams": list(teams.values())}
+
+
+def set_team(
+    client: ApiClient,
+    team: str,
+    add: list[str] | None = None,
+    remove: list[str] | None = None,
+    allow_reach_change: bool = False,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Create a team or move bots in and out of it, refusing silent changes to who reaches whom.
+
+    A team is not only a sidebar heading: bots in different teams cannot message each other
+    and a bot's failures only reach the Chief of Staff of its own team.
+    """
+    _ensure_compatible(client)
+    if not isinstance(team, str) or not team.strip():
+        raise OpenMausBotApiError("Team name is required; bots leave a team with remove.")
+    name = team.strip()
+    if len(name) > TEAM_NAME_MAX_CHARS:
+        raise OpenMausBotApiError(f"Team name must be at most {TEAM_NAME_MAX_CHARS} characters.")
+    add, remove = list(add or []), list(remove or [])
+    if not add and not remove:
+        raise OpenMausBotApiError("Name at least one bot to add or remove.")
+
+    bots = [bot for bot in _bots(client) if isinstance(bot.get("id"), str) and bot["id"]]
+    to_add = [_resolve_named(bots, value, kind="bot") for value in add]
+    to_remove = [_resolve_named(bots, value, kind="bot") for value in remove]
+    overlap = {bot["id"] for bot in to_add} & {bot["id"] for bot in to_remove}
+    if overlap:
+        raise OpenMausBotApiError("A bot cannot be added to and removed from a team at once.")
+
+    existing = {_team_key(item) for item in client.list_teams().get("sections") or []}
+    before = {bot["id"]: _team_key(bot.get("section")) for bot in bots}
+    after = dict(before)
+    add_ids = [bot["id"] for bot in to_add if before[bot["id"]] != name]
+    remove_ids = [bot["id"] for bot in to_remove if before[bot["id"]] == name]
+    for bot_id in add_ids:
+        after[bot_id] = name
+    for bot_id in remove_ids:
+        after[bot_id] = ""
+
+    by_id = {bot["id"]: bot for bot in bots}
+    chiefs = [
+        by_id[bot_id].get("name")
+        for bot_id in after
+        if after[bot_id] == name and by_id[bot_id].get("chiefOfStaff")
+    ]
+    if len(chiefs) > 1:
+        raise OpenMausBotApiError(
+            f"A team can have only one Chief of Staff; {name} would have {', '.join(chiefs)}."
+        )
+
+    reach_before, reach_after = _reach(bots, before), _reach(bots, after)
+    covered_before, covered_after = _chief_covered(bots, before), _chief_covered(bots, after)
+    impact = {
+        "moves": [
+            {
+                "bot": by_id[bot_id].get("name"),
+                "from": _team_label(before[bot_id]),
+                "to": _team_label(after[bot_id]),
+            }
+            for bot_id in add_ids + remove_ids
+        ],
+        "reach_lost": sorted(f"{a} -> {b}" for a, b in reach_before - reach_after),
+        "reach_gained": sorted(f"{a} -> {b}" for a, b in reach_after - reach_before),
+        "chief_coverage_lost": sorted(covered_before - covered_after),
+        "chief_coverage_gained": sorted(covered_after - covered_before),
+    }
+
+    if name in existing:
+        method, path = "PUT", f"/api/sidebar-sections?section={name}"
+        body: dict[str, Any] = {"addBotIds": add_ids, "removeBotIds": remove_ids}
+    else:
+        if remove_ids:
+            raise OpenMausBotApiError(f"Team {name} does not exist; nothing to remove from it.")
+        method, path = "POST", "/api/sidebar-sections"
+        body = {"name": name, "botIds": add_ids}
+    teams_before = {
+        by_id[bot_id].get("name"): _team_label(before[bot_id]) for bot_id in add_ids + remove_ids
+    }
+    if not add_ids and not remove_ids:
+        result = _base_result("noop", dry_run, method, path, {}, teams_before)
+        result["impact"] = impact
+        return result
+    result = _base_result(
+        "create_team" if method == "POST" else "update_team",
+        dry_run,
+        method,
+        path,
+        body,
+        teams_before,
+    )
+    result["impact"] = impact
+    changes_reach = any(
+        impact[key]
+        for key in ("reach_lost", "reach_gained", "chief_coverage_lost", "chief_coverage_gained")
+    )
+    if changes_reach and not allow_reach_change:
+        if dry_run:
+            result["warning"] = (
+                "This move changes which bots can reach each other or a Chief of Staff; "
+                "applying it requires allow_reach_change=True."
+            )
+            return result
+        raise OpenMausBotApiError(
+            "This team change alters which bots can reach each other or a Chief of Staff; "
+            "review the dry run and pass allow_reach_change=True to confirm."
+        )
+    if dry_run:
+        return result
+
+    if method == "POST":
+        client.create_team(name, add_ids)
+    else:
+        client.update_team_members(name, add_ids, remove_ids)
+    fresh = {bot.get("id"): bot for bot in _bots(client)}
+    mismatches = [
+        by_id[bot_id].get("name") or bot_id
+        for bot_id in add_ids + remove_ids
+        if bot_id not in fresh or _team_key(fresh[bot_id].get("section")) != after[bot_id]
+    ]
+    teams_after = {
+        by_id[bot_id].get("name"): _team_label(_team_key(fresh.get(bot_id, {}).get("section")))
+        for bot_id in add_ids + remove_ids
+    }
+    return _finish(result, teams_after, mismatches)
 
 
 def _bounded_string(value: Any, field: str, maximum: int) -> str:
@@ -522,9 +724,7 @@ def delete_routine(
     if not isinstance(routine_id, str) or not routine_id:
         raise OpenMausBotApiError("The selected routine has no usable id.")
     path = f"/api/routines/{routine_id}"
-    result = _base_result(
-        "delete", dry_run, "DELETE", path, {}, {"id": routine_id, "name": name}
-    )
+    result = _base_result("delete", dry_run, "DELETE", path, {}, {"id": routine_id, "name": name})
     if dry_run:
         return result
     client.delete_routine(routine_id)
