@@ -336,6 +336,28 @@ class ApiClient:
             require_token=True,
         )
 
+    def list_teams(self) -> dict[str, Any]:
+        return self.request("GET", "/api/sidebar-sections")
+
+    def create_team(self, name: str, bot_ids: list[str]) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            "/api/sidebar-sections",
+            body={"name": name, "botIds": bot_ids},
+            require_token=True,
+        )
+
+    def update_team_members(
+        self, name: str, add_bot_ids: list[str], remove_bot_ids: list[str]
+    ) -> dict[str, Any]:
+        return self.request(
+            "PUT",
+            "/api/sidebar-sections",
+            query={"section": name},
+            body={"addBotIds": add_bot_ids, "removeBotIds": remove_bot_ids},
+            require_token=True,
+        )
+
     def create_routine(self, spec: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", "/api/routines", body=spec, require_token=True)
 

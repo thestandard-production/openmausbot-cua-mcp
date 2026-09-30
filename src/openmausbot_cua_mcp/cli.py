@@ -79,6 +79,17 @@ def _parser() -> argparse.ArgumentParser:
     bot_model.add_argument("--effort")
     bot_model.add_argument("--apply", dest="apply_changes", action="store_true")
 
+    commands.add_parser("teams", help="List teams with their members and Chief of Staff.")
+
+    team = commands.add_parser("team", help="Create a team or move bots between teams.")
+    team.add_argument("name", help="Team name; created if missing.")
+    team.add_argument("--add", action="append", default=[], help="Bot to move in (repeatable).")
+    team.add_argument(
+        "--remove", action="append", default=[], help="Bot to move back to General (repeatable)."
+    )
+    team.add_argument("--allow-reach-change", action="store_true")
+    team.add_argument("--apply", dest="apply_changes", action="store_true")
+
     routine_upsert = commands.add_parser("routine-upsert", help="Create or update a routine.")
     routine_upsert.add_argument("--json", required=True, dest="spec_file", help="JSON spec file.")
     routine_upsert.add_argument("--apply", dest="apply_changes", action="store_true")
@@ -225,6 +236,18 @@ def _run(client: ApiClient, args: argparse.Namespace) -> tuple[Any, int]:
     if args.command == "apply":
         payload = desired.apply(
             client, args.file, only=args.only, dry_run=not args.apply_changes
+        )
+        return payload, _write_exit_code(payload)
+    if args.command == "teams":
+        return admin.list_teams(client), 0
+    if args.command == "team":
+        payload = admin.set_team(
+            client,
+            args.name,
+            add=args.add,
+            remove=args.remove,
+            allow_reach_change=args.allow_reach_change,
+            dry_run=not args.apply_changes,
         )
         return payload, _write_exit_code(payload)
     if args.command == "bot-update":

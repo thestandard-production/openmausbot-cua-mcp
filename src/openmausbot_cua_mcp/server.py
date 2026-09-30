@@ -491,6 +491,65 @@ def openmausbot_set_bot_model(
 
 
 @mcp.tool(
+    name="openmausbot_list_teams",
+    annotations={
+        "title": "List OpenMausBot teams",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_list_teams() -> dict[str, Any]:
+    """List teams (sidebar sections) with their members and Chief of Staff."""
+    try:
+        return admin.list_teams(ApiClient())
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="openmausbot_set_team",
+    annotations={
+        "title": "Create a team or move bots between teams",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def openmausbot_set_team(
+    team: Annotated[
+        str, Field(min_length=1, max_length=60, description="Team name; created if missing.")
+    ],
+    add: Annotated[
+        list[str] | None, Field(description="Bot ids or unique names to move into the team.")
+    ] = None,
+    remove: Annotated[
+        list[str] | None,
+        Field(description="Bot ids or unique names to move out, back to the General team."),
+    ] = None,
+    allow_reach_change: bool = False,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Plan or apply a team change. Teams also bound which bots can message each other and
+    which Chief of Staff receives a bot's failures; the result's `impact` lists both."""
+    if not writes_enabled():
+        return _writes_disabled()
+    try:
+        return admin.set_team(
+            ApiClient(),
+            team,
+            add=add,
+            remove=remove,
+            allow_reach_change=allow_reach_change,
+            dry_run=dry_run,
+        )
+    except OpenMausBotApiError as exc:
+        return _error(exc)
+
+
+@mcp.tool(
     name="openmausbot_upsert_routine",
     annotations={
         "title": "Create or update an OpenMausBot routine",

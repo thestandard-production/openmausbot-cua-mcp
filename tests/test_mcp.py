@@ -27,6 +27,8 @@ EXPECTED_TOOLS = {
     "openmausbot_plan",
     "openmausbot_update_bot",
     "openmausbot_set_bot_model",
+    "openmausbot_list_teams",
+    "openmausbot_set_team",
     "openmausbot_upsert_routine",
     "openmausbot_set_routine_enabled",
     "openmausbot_run_routine_now",
@@ -44,11 +46,13 @@ READ_ONLY_ADMIN_TOOLS = {
     "openmausbot_list_decisions",
     "openmausbot_export_team",
     "openmausbot_plan",
+    "openmausbot_list_teams",
 }
 
 WRITE_ADMIN_TOOLS = {
     "openmausbot_update_bot",
     "openmausbot_set_bot_model",
+    "openmausbot_set_team",
     "openmausbot_upsert_routine",
     "openmausbot_set_routine_enabled",
     "openmausbot_run_routine_now",

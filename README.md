@@ -92,6 +92,7 @@ results reach the MCP client.
 | `openmausbot_usage` | Usage and billing summaries for a date range of up to one year |
 | `openmausbot_list_models` | Provider instances, model options, and effort levels |
 | `openmausbot_list_decisions` | Recent decisions, with a limit from 1 to 500 |
+| `openmausbot_list_teams` | Teams (sidebar sections) with their members and Chief of Staff |
 | `openmausbot_export_team` | Team export in manifest, package, or backup format |
 
 `openmausbot_export_team` calls OpenMausBot's export endpoint, which is a POST
@@ -152,9 +153,26 @@ fresh GET and field-by-field verification. If the read-back does not match, the 
 idempotent by exact routine name because the public create endpoint has no idempotency key;
 duplicate names must be resolved in the app first.
 
-MCP write tools include guarded bot updates and model selection, routine upsert/enable/run/delete,
-and run cancellation. `openmausbot_plan` is read-only and plans a desired-state file; applying a
-desired-state item is intentionally CLI-only.
+MCP write tools include guarded bot updates and model selection, team membership,
+routine upsert/enable/run/delete, and run cancellation. `openmausbot_plan` is read-only and plans a
+desired-state file; applying a desired-state item is intentionally CLI-only.
+
+### Teams
+
+A team (the app's sidebar section) is more than a heading. Bots in different teams cannot message
+each other, and a bot's failures only reach the Chief of Staff of its own team.
+`openmausbot_list_teams` / `omb-ctl teams` show each team's members and Chief.
+`openmausbot_set_team` / `omb-ctl team` create a team or move bots in and out of it. Every plan
+includes an `impact` section with the moves, the bot-to-bot reach lost or gained, and bots that
+lose or gain a Chief. A change that alters reach or Chief coverage is refused unless
+`allow_reach_change` is set. A second Chief of Staff in one team is refused before any request.
+
+```bash
+omb-ctl teams
+omb-ctl team Operations --add Minerva --add Arthur            # dry run with impact
+omb-ctl team Operations --add Minerva --add Arthur --apply
+omb-ctl team Operations --remove Arthur --allow-reach-change --apply   # back to General
+```
 
 ```bash
 # Dry run (no mutation)
