@@ -20,7 +20,8 @@ token is only sent to an origin configured explicitly with `OPENMAUSBOT_URL` or
 OpenMausBot requires a paired-device session token for every mutation. The
 team export route is a POST route and follows that requirement even though it
 only returns an export. Pair through the OpenMausBot app and provide the token
-directly or through an explicitly configured macOS Keychain service. Tokens
+directly or through an explicitly configured macOS Keychain service. [docs/PAIRING.md](docs/PAIRING.md) and
+`scripts/omb-pair.sh` describe a flow in which the token never passes through a chat, argv or the screen. Tokens
 are never logged, printed, or included in tool results.
 
 MCP administration mutations have an additional opt-in gate:

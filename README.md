@@ -96,7 +96,8 @@ results reach the MCP client.
 
 `openmausbot_export_team` calls OpenMausBot's export endpoint, which is a POST
 route and therefore requires a paired-device session token. Pairing is always
-completed through the OpenMausBot app; this package does not create sessions.
+completed through the OpenMausBot app; this package does not create sessions. See [docs/PAIRING.md](docs/PAIRING.md) for the step-by-step guide
+(and what an AI assistant should and should not do when it needs a token).
 
 The same views are available from `omb-ctl`. JSON is the default output. Bots
 and routines also support a compact text table.
